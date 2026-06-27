@@ -26,6 +26,36 @@ from .tokenizer.parse import get_tokenizer
 os.environ.setdefault("XFORMERS_IGNORE_FLASH_VERSION_CHECK", "1")
 
 SUPPORTED_EXT = {".obj", ".fbx", ".glb"}
+SUPPORTED_EXPORT_EXT = {".glb", ".fbx"}
+
+
+def normalize_export_format(export_format: str) -> str:
+    fmt = export_format.lower().lstrip(".")
+    if fmt not in ("glb", "fbx"):
+        raise ValueError(f"Unsupported export format: {export_format!r}. Use glb or fbx.")
+    return fmt
+
+
+def export_suffix(export_format: str) -> str:
+    return f".{normalize_export_format(export_format)}"
+
+
+def resolve_output_path(
+    mesh_path: Path,
+    output_path: Optional[Path],
+    export_format: str = "glb",
+    default_dir: Optional[Path] = None,
+) -> Path:
+    suffix = export_suffix(export_format)
+    if output_path is None:
+        out_dir = default_dir or mesh_path.parent
+        return out_dir / f"{mesh_path.stem}_rigged{suffix}"
+    output_path = Path(output_path)
+    if output_path.suffix.lower() in SUPPORTED_EXPORT_EXT:
+        return output_path
+    if output_path.suffix:
+        return output_path
+    return output_path.with_suffix(suffix)
 
 model = None
 tokenizer = None
@@ -255,6 +285,11 @@ def collect_files(input_path: Path) -> List[Path]:
     return files
 
 
-def map_output_path(in_path: Path, input_root: Path, output_root: Path) -> Path:
+def map_output_path(
+    in_path: Path,
+    input_root: Path,
+    output_root: Path,
+    export_format: str = "glb",
+) -> Path:
     rel = in_path.relative_to(input_root)
-    return (output_root / rel).with_suffix(".glb")
+    return (output_root / rel).with_suffix(export_suffix(export_format))

@@ -11,6 +11,7 @@ gr.TEMP_DIR = "tmp_gradio"
 
 from src.pipeline import (
     collect_files,
+    export_suffix,
     load_model,
     map_output_path,
     run_rig,
@@ -39,6 +40,7 @@ def run_gradio(
     use_skeleton,
     use_transfer,
     use_postprocess,
+    export_format,
     model_ckpt,
     hf_path,
 ):
@@ -47,11 +49,12 @@ def run_gradio(
 
     tmp_out = Path(tempfile.mkdtemp(prefix="tokenrig_"))
     filepaths = [Path(f.name) for f in files]
+    suffix = export_suffix(export_format)
     global TOT
     outputs = []
     for filepath in filepaths:
         TOT += 1
-        outputs.append(tmp_out / f"res_{TOT}.glb")
+        outputs.append(tmp_out / f"res_{TOT}{suffix}")
 
     run_rig(
         filepaths,
@@ -79,7 +82,7 @@ def launch_gradio():
 
     with gr.Blocks(title="TokenRig Demo") as demo:
         gr.Markdown("## TokenRig Demo")
-        gr.Markdown("Upload 3D assets, configure parameters, generate rigged GLB")
+        gr.Markdown("Upload 3D assets, configure parameters, generate rigged GLB or FBX")
 
         files = gr.File(
             label="3D Models",
@@ -108,11 +111,17 @@ def launch_gradio():
             use_skeleton = gr.Checkbox(False, label="Use skeleton (only generate skin if skeleton exists)")
             use_transfer = gr.Checkbox(False, label="Use transfer (maintain texture)")
             use_postprocess = gr.Checkbox(False, label="Use postprocess (voxel skin)")
+            export_format = gr.Dropdown(
+                choices=["glb", "fbx"],
+                value="glb",
+                label="Export format",
+                interactive=True,
+            )
 
         run_btn = gr.Button("Run", variant="primary")
         load_btn = gr.Button("Load Model")
         log = gr.Textbox(label="Status")
-        output = gr.File(label="Generated GLB", interactive=False)
+        output = gr.File(label="Generated mesh", interactive=False)
 
         load_btn.click(
             lambda ckpt, hf: load_model(ckpt, hf)[0],
@@ -132,6 +141,7 @@ def launch_gradio():
                 use_skeleton,
                 use_transfer,
                 use_postprocess,
+                export_format,
                 model_ckpt,
                 hf_path,
             ],
@@ -153,7 +163,7 @@ def run_cli(args):
         outputs = [output_path]
     else:
         outputs = [
-            map_output_path(f, input_path, output_path)
+            map_output_path(f, input_path, output_path, export_format=args.export_format)
             for f in files
         ]
 
@@ -187,6 +197,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_skeleton", action="store_true")
     parser.add_argument("--use_transfer", action="store_true")
     parser.add_argument("--use_postprocess", action="store_true")
+    parser.add_argument("--export_format", choices=["glb", "fbx"], default="glb")
 
     parser.add_argument("--model_ckpt", default=MODEL_CKPTS[0] if MODEL_CKPTS else "")
     parser.add_argument("--hf_path", default=None)

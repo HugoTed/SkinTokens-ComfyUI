@@ -24,6 +24,7 @@ from config import get_default_model_ckpt, load_config  # noqa: E402
 from src.pipeline import (  # noqa: E402
     is_model_loaded,
     load_model,
+    resolve_output_path,
     run_rig,
     start_bpy_server,
     wait_for_bpy_server,
@@ -92,13 +93,16 @@ def create_app() -> bottle.Bottle:
             if not mesh_path.is_file():
                 raise FileNotFoundError(f"Mesh not found: {mesh_path}")
 
+            export_format = data.get("export_format", "glb")
             output_path = data.get("output_path")
-            if output_path:
-                out_path = Path(output_path).resolve()
-            else:
-                out_dir = PLUGIN_ROOT / "output" / "comfyui"
-                out_dir.mkdir(parents=True, exist_ok=True)
-                out_path = out_dir / f"{mesh_path.stem}_rigged.glb"
+            default_dir = PLUGIN_ROOT / "output" / "comfyui"
+            default_dir.mkdir(parents=True, exist_ok=True)
+            out_path = resolve_output_path(
+                mesh_path,
+                Path(output_path).resolve() if output_path else None,
+                export_format=export_format,
+                default_dir=default_dir,
+            )
 
             model_ckpt = data.get("model_ckpt") or str(get_default_model_ckpt())
             hf_path = data.get("hf_path")

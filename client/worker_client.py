@@ -119,6 +119,7 @@ def infer(
     output_path: Optional[str] = None,
     model_ckpt: Optional[str] = None,
     hf_path: Optional[str] = None,
+    export_format: str = "glb",
     top_k: int = 5,
     top_p: float = 0.95,
     temperature: float = 1.0,
@@ -131,6 +132,7 @@ def infer(
     payload = {
         "mesh_path": str(Path(mesh_path).resolve()),
         "output_path": output_path,
+        "export_format": export_format,
         "model_ckpt": model_ckpt,
         "hf_path": hf_path,
         "top_k": top_k,

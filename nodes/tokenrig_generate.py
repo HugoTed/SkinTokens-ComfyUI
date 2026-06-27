@@ -5,7 +5,7 @@ from client.worker_client import ensure_worker_running, infer
 
 
 class TokenRigGenerate:
-    """Generate rigged GLB from an input mesh via the TokenRig worker."""
+    """Generate rigged mesh (GLB or FBX) from an input mesh via the TokenRig worker."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -16,6 +16,7 @@ class TokenRigGenerate:
                 "model_ckpt": ("STRING", {"default": default_ckpt}),
                 "hf_path": ("STRING", {"default": "None"}),
                 "output_path": ("STRING", {"default": "", "multiline": False}),
+                "export_format": (["glb", "fbx"], {"default": "glb"}),
                 "top_k": ("INT", {"default": 5, "min": 1, "max": 200, "step": 1}),
                 "top_p": ("FLOAT", {"default": 0.95, "min": 0.1, "max": 1.0, "step": 0.01}),
                 "temperature": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 2.0, "step": 0.1}),
@@ -31,7 +32,7 @@ class TokenRigGenerate:
         }
 
     RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("output_glb_path", "status")
+    RETURN_NAMES = ("output_path", "status")
     FUNCTION = "run"
     CATEGORY = "3d/tokenrig"
 
@@ -41,6 +42,7 @@ class TokenRigGenerate:
         model_ckpt: str,
         hf_path: str,
         output_path: str,
+        export_format: str,
         top_k: int,
         top_p: float,
         temperature: float,
@@ -68,6 +70,7 @@ class TokenRigGenerate:
             output_path=out,
             model_ckpt=model_ckpt,
             hf_path=hf,
+            export_format=export_format,
             top_k=top_k,
             top_p=top_p,
             temperature=temperature,
@@ -77,7 +80,7 @@ class TokenRigGenerate:
             use_transfer=use_transfer,
             use_postprocess=use_postprocess,
         )
-        status = f"Rigged GLB saved to: {result_path}"
+        status = f"Rigged {export_format.upper()} saved to: {result_path}"
         if setup_status:
             status = f"{setup_status}\n{status}"
         return (result_path, status)
