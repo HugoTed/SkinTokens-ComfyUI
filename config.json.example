@@ -1,0 +1,19 @@
+{
+  "worker": {
+    "host": "127.0.0.1",
+    "port": 59877,
+    "venv": ".tokenrig-venv",
+    "auto_start": true,
+    "auto_install": true,
+    "startup_timeout": 300
+  },
+  "model": {
+    "auto_download": true,
+    "default_ckpt": "experiments/articulation_xl_quantization_256_token_4/grpo_1400.ckpt",
+    "default_hf_path": null
+  },
+  "torch": {
+    "index_url": "https://download.pytorch.org/whl/cu128",
+    "version": "2.7.0"
+  }
+}

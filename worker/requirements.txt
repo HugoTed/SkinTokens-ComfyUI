@@ -1,0 +1,16 @@
+transformers>=4.57.0
+diffusers>=0.35.0
+python-box
+einops
+omegaconf
+lightning
+addict
+fast-simplification
+bpy>=4.2
+trimesh
+open3d
+huggingface_hub
+numpy>=1.26.0
+bottle
+tornado
+requests

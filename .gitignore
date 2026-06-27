@@ -7,9 +7,14 @@ __pycache__/
 
 # Virtual environments
 .venv/
+.tokenrig-venv/
 venv/
 env/
 .env/
+
+# ComfyUI outputs
+output/
+config.json
 
 # ignore tmp & output files
 _data/

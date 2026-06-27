@@ -65,7 +65,7 @@ See the [project page](https://zjp-shadow.github.io/works/SkinTokens/) for the f
 
 3. Install dependencies:
     ```sh
-    uv pip install -r requirements.txt
+    uv pip install -r worker/requirements.txt
     ```
 
 4. Install [flash-attn](https://github.com/Dao-AILab/flash-attention):
@@ -90,6 +90,51 @@ We provide the following pretrained models on [Hugging Face](https://huggingface
 | `skin_vae_2_10_32768` | FSQ-CVAE (SkinTokens) — skin-weight tokenizer used to encode and decode skinning weights | [Download](https://huggingface.co/VAST-AI/SkinTokens/tree/main/experiments/skin_vae_2_10_32768) |
 
 ## 💡 Usage
+
+### ComfyUI (recommended for workflow integration)
+
+1. Clone into ComfyUI custom nodes:
+    ```sh
+    cd ComfyUI/custom_nodes
+    git clone https://github.com/your-org/SkinTokens-ComfyUI.git
+    ```
+
+2. Restart ComfyUI, then either:
+    - Run the **TokenRig Setup (Install Worker)** node once, or
+    - Let **TokenRig Generate Rig** auto-install on first use.
+
+   The plugin creates an isolated worker venv (`.tokenrig-venv`, Python 3.11) and starts both the inference worker and `bpy_server` automatically. **You do not need to start bpy manually.**
+
+3. Workflow nodes (category `3d/tokenrig`):
+    - **TokenRig Setup** — install worker venv, download model, start worker
+    - **TokenRig Load Model** — preload checkpoint (optional)
+    - **TokenRig Generate Rig** — input mesh path → rigged GLB path
+
+4. Optional config: copy `config.json.example` to `config.json` to customize ports, venv path, or PyTorch index URL.
+
+Manual worker install (without ComfyUI):
+
+Linux:
+```sh
+bash scripts/install_worker.sh
+# or
+python3 bootstrap.py
+```
+
+Windows:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install_worker.ps1
+```
+
+Linux prerequisites for the worker venv:
+```sh
+sudo apt update
+sudo apt install python3.11 python3.11-venv
+# bpy/Blender may also need: libgl1, libglib2.0-0, libxrender1, libxext6
+```
+
+> [!NOTE]
+> ComfyUI may ship with Python 3.10. That is fine: the plugin only installs `requests` into ComfyUI's environment. The TokenRig worker always uses its own `.tokenrig-venv` (Python 3.11+).
 
 ### Hugging Face Space Demo
 
