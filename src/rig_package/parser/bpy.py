@@ -12,10 +12,46 @@ from .abstract import AbstractParser
 from ..info.asset import Asset
 from mathutils import Vector, Matrix # type: ignore
 
+def _is_ascii_fbx(filepath: str) -> bool:
+    try:
+        with open(filepath, "rb") as f:
+            head = f.read(64)
+    except OSError:
+        return False
+    return head.lstrip().startswith(b";") and b"FBX" in head
+
+
+def _load_asset_via_trimesh(filepath: str) -> Asset:
+    loaded = trimesh.load(filepath, force="mesh")
+    if isinstance(loaded, trimesh.Scene):
+        if not loaded.geometry:
+            raise RuntimeError(f"No mesh geometry found in {filepath}")
+        loaded = trimesh.util.concatenate(tuple(loaded.geometry.values()))
+    if not isinstance(loaded, trimesh.Trimesh):
+        raise RuntimeError(
+            f"Could not load mesh from {filepath}. Export as GLB or binary FBX instead."
+        )
+    vertices = np.asarray(loaded.vertices, dtype=np.float32)
+    faces = np.asarray(loaded.faces, dtype=np.int32)
+    return Asset(
+        vertices=vertices,
+        faces=faces,
+        vertex_normals=np.asarray(loaded.vertex_normals, dtype=np.float32),
+        face_normals=np.asarray(loaded.face_normals, dtype=np.float32),
+        vertex_bias=np.array([vertices.shape[0]], dtype=np.int32),
+        face_bias=np.array([faces.shape[0]], dtype=np.int32),
+        mesh_names=np.array([os.path.basename(filepath)]),
+    )
+
 class BpyParser(AbstractParser):
     
     @classmethod
     def load(cls, filepath: str, **kwargs) -> Asset:
+        if filepath.lower().endswith(".fbx") and _is_ascii_fbx(filepath):
+            print(f"[TokenRig] Loading ASCII FBX via trimesh (Blender cannot import it): {filepath}")
+            asset = _load_asset_via_trimesh(filepath)
+            asset.path = filepath
+            return asset
         clean_bpy()
         load(filepath=filepath, **kwargs)
         collection = bpy.data.collections.get("glTF_not_exported")
@@ -268,11 +304,19 @@ def load(filepath: str, **kwargs):
     if ext == "obj":
         bpy.ops.wm.obj_import(filepath=filepath)
     elif ext == "fbx":
-        bpy.ops.import_scene.fbx(
-            filepath=filepath,
-            ignore_leaf_bones=kwargs.get('ignore_leaf_bones', False),
-            use_image_search=kwargs.get('use_image_search', True),
-        )
+        try:
+            bpy.ops.import_scene.fbx(
+                filepath=filepath,
+                ignore_leaf_bones=kwargs.get('ignore_leaf_bones', False),
+                use_image_search=kwargs.get('use_image_search', True),
+            )
+        except RuntimeError as exc:
+            if "ASCII FBX" in str(exc):
+                raise RuntimeError(
+                    f"ASCII FBX is not supported by Blender: {filepath}. "
+                    "Re-export as GLB/binary FBX, or update SkinTokens-ComfyUI for trimesh fallback."
+                ) from exc
+            raise
     elif ext == "glb" or ext == "gltf":
         bpy.ops.import_scene.gltf(filepath=filepath, import_pack_images=kwargs.get('import_pack_images', False))
     elif ext == "dae":
