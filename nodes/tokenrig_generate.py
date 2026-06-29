@@ -35,6 +35,7 @@ class TokenRigGenerate:
     RETURN_NAMES = ("output_path", "status")
     FUNCTION = "run"
     CATEGORY = "3d/tokenrig"
+    OUTPUT_NODE = True
 
     def run(
         self,
