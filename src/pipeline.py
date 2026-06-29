@@ -227,8 +227,8 @@ def run_rig(
     dataset_config = DatasetConfig.parse(
         shuffle=False,
         batch_size=1,
-        num_workers=1,
-        pin_memory=True,
+        num_workers=0,
+        pin_memory=False,
         persistent_workers=False,
         datapath=datapath,
     ).split_by_cls()

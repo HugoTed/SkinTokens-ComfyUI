@@ -42,12 +42,14 @@ class BpyServerLazyAsset(LazyAsset):
             asset = bytes_to_object(requests.get(f"{BPY_SERVER}/load", data=object_to_bytes(self.path)).content)
             if isinstance(asset, str):
                 raise RuntimeError(f"bpy server failed: {asset}")
+            if isinstance(asset, dict) and asset.get("error") is not None:
+                raise RuntimeError(asset.get("traceback") or asset["error"])
             assert isinstance(asset, Asset)
             asset.cls = self.cls
             asset.path = self.path
             return asset
         except Exception as e:
-            raise RuntimeError(f"bpy server failed: {str(e)}")
+            raise RuntimeError(f"bpy server failed to load {self.path!r}: {e}") from e
 
 @dataclass
 class NpzLazyAsset(LazyAsset):
