@@ -152,8 +152,9 @@ def wait_for_bpy_server(timeout: float = 30) -> None:
 
 def load_model(model_ckpt: str, hf_path: Optional[str] = None) -> Tuple[str, str]:
     global model, tokenizer, transform, CURRENT_MODEL_CKPT, CURRENT_HF_PATH
-    if hf_path in ("None", ""):
-        hf_path = None
+    from config import normalize_hf_path
+
+    hf_path = normalize_hf_path(hf_path)
     model_ckpt = resolve_model_ckpt(model_ckpt)
     if model is not None and model_ckpt == CURRENT_MODEL_CKPT and hf_path == CURRENT_HF_PATH:
         return ("Model already loaded.", model_ckpt)

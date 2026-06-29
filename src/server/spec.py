@@ -71,9 +71,14 @@ def get_model(
     hf_path: Optional[str]=None,
     device='cuda',
 ) -> TokenRig:
+    from config import normalize_hf_path
+
+    hf_path = normalize_hf_path(hf_path)
     model = TokenRig.load_from_system_checkpoint(checkpoint_path=ckpt_path)
     if hf_path is not None:
         from transformers import AutoModel
+
+        print(f"[TokenRig] Loading optional LLM weights from {hf_path}")
         a = AutoModel.from_pretrained(
             hf_path,
             local_files_only=True,

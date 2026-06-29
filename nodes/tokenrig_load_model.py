@@ -1,4 +1,4 @@
-from config import get_default_model_ckpt
+from config import get_default_model_ckpt, normalize_hf_path
 from client.worker_client import ensure_worker_running, load_model
 
 
@@ -22,6 +22,6 @@ class TokenRigLoadModel:
 
     def run(self, model_ckpt: str, hf_path: str):
         ensure_worker_running()
-        hf = None if hf_path in ("None", "") else hf_path
+        hf = normalize_hf_path(hf_path)
         message, ckpt = load_model(model_ckpt, hf_path=hf)
         return (message, ckpt)

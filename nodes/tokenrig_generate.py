@@ -2,7 +2,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from config import get_default_model_ckpt
+from config import get_default_model_ckpt, normalize_hf_path, normalize_output_path
 from client.worker_client import ensure_worker_running, infer
 
 _LOAD_STATUS_MESSAGES = frozenset({"Model loaded.", "Model already loaded."})
@@ -151,12 +151,12 @@ class TokenRigGenerate:
 
         ensure_worker_running()
 
-        out = output_path.strip() or None
+        out = normalize_output_path(output_path)
         if out:
             out_path = Path(out)
             out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        hf = None if hf_path in ("None", "") else hf_path
+        hf = normalize_hf_path(hf_path)
         ckpt = model_ckpt.strip()
         if ckpt in _LOAD_STATUS_MESSAGES or not ckpt:
             ckpt = str(get_default_model_ckpt())

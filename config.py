@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 PLUGIN_ROOT = Path(__file__).resolve().parent
 VENV_DIR_NAME = ".tokenrig-venv"
@@ -104,3 +104,55 @@ def get_default_model_ckpt(config: Dict[str, Any] | None = None) -> Path:
     if not ckpt_path.is_absolute():
         ckpt_path = PLUGIN_ROOT / ckpt_path
     return ckpt_path
+
+
+def normalize_hf_path(hf_path: Optional[str]) -> Optional[str]:
+    """Return hf_path only when it points to a local Hugging Face model directory."""
+    if hf_path is None:
+        return None
+    value = hf_path.strip()
+    if value.lower() in ("none", "", "null", "false"):
+        return None
+    path = Path(value)
+    if path.suffix.lower() in (".ckpt", ".pt", ".pth", ".safetensors"):
+        return None
+    if path.is_file():
+        return None
+
+    candidates = [path]
+    if not path.is_absolute():
+        candidates.append(PLUGIN_ROOT / path)
+
+    for candidate in candidates:
+        if _is_local_hf_model_dir(candidate):
+            return str(candidate.resolve())
+
+    if value and value.lower() not in ("none", ""):
+        print(
+            f"[TokenRig] Ignoring hf_path {value!r}: not a local Hugging Face model directory. "
+            "Leave hf_path as None for normal inference."
+        )
+    return None
+
+
+def _is_local_hf_model_dir(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    if not (path / "config.json").is_file():
+        return False
+    weight_names = (
+        "model.safetensors",
+        "pytorch_model.bin",
+        "model.safetensors.index.json",
+    )
+    return any((path / name).is_file() for name in weight_names)
+
+
+def normalize_output_path(output_path: Optional[str]) -> Optional[str]:
+    """Treat UI placeholder strings like 'None' as unset."""
+    if output_path is None:
+        return None
+    value = output_path.strip()
+    if value.lower() in ("none", "", "null"):
+        return None
+    return value

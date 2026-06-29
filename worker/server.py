@@ -20,7 +20,7 @@ if str(PLUGIN_ROOT) not in sys.path:
 os.chdir(PLUGIN_ROOT)
 os.environ.setdefault("XFORMERS_IGNORE_FLASH_VERSION_CHECK", "1")
 
-from config import get_default_model_ckpt, load_config  # noqa: E402
+from config import get_default_model_ckpt, load_config, normalize_hf_path, normalize_output_path  # noqa: E402
 from src.pipeline import (  # noqa: E402
     is_model_loaded,
     load_model,
@@ -77,7 +77,7 @@ def create_app() -> bottle.Bottle:
             model_ckpt = data.get("model_ckpt")
             if not model_ckpt:
                 model_ckpt = str(get_default_model_ckpt())
-            hf_path = data.get("hf_path")
+            hf_path = normalize_hf_path(data.get("hf_path"))
             message, ckpt = load_model(model_ckpt, hf_path=hf_path)
             return _json_response({"status": "ok", "message": message, "model_ckpt": ckpt})
         except Exception as exc:
@@ -94,7 +94,7 @@ def create_app() -> bottle.Bottle:
                 raise FileNotFoundError(f"Mesh not found: {mesh_path}")
 
             export_format = data.get("export_format", "glb")
-            output_path = data.get("output_path")
+            output_path = normalize_output_path(data.get("output_path"))
             default_dir = PLUGIN_ROOT / "output" / "comfyui"
             default_dir.mkdir(parents=True, exist_ok=True)
             out_path = resolve_output_path(
@@ -105,9 +105,7 @@ def create_app() -> bottle.Bottle:
             )
 
             model_ckpt = data.get("model_ckpt") or str(get_default_model_ckpt())
-            hf_path = data.get("hf_path")
-            if hf_path in ("None", ""):
-                hf_path = None
+            hf_path = normalize_hf_path(data.get("hf_path"))
 
             results = run_rig(
                 filepaths=[mesh_path],
