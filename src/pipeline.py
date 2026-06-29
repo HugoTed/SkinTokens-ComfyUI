@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import atexit
 import os
+import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -70,6 +72,10 @@ def get_plugin_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def _bpy_log_path(plugin_root: Path) -> Path:
+    return plugin_root / "tokenrig-bpy.log"
+
+
 def start_bpy_server(python: Optional[str] = None, cwd: Optional[Path] = None):
     global _bpy_proc
     if _bpy_proc is not None and _bpy_proc.poll() is None:
@@ -77,11 +83,17 @@ def start_bpy_server(python: Optional[str] = None, cwd: Optional[Path] = None):
 
     plugin_root = cwd or get_plugin_root()
     executable = python or sys.executable
+    log_path = _bpy_log_path(plugin_root)
+    log_file = open(log_path, "a", encoding="utf-8")
+    log_file.write(f"\n--- bpy_server start {datetime.now().isoformat()} ---\n")
+    log_file.flush()
     proc = popen_detached(
         [executable, str(plugin_root / "bpy_server.py")],
         cwd=str(plugin_root),
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
     )
-    print(f"[TokenRig] bpy_server started (pid={proc.pid})")
+    print(f"[TokenRig] bpy_server started (pid={proc.pid}), log: {log_path}")
     _bpy_proc = proc
 
     def cleanup():
@@ -94,14 +106,33 @@ def start_bpy_server(python: Optional[str] = None, cwd: Optional[Path] = None):
 
 def wait_for_bpy_server(timeout: float = 30) -> None:
     t0 = time.time()
+    log_path = _bpy_log_path(get_plugin_root())
     while True:
+        if _bpy_proc is not None and _bpy_proc.poll() is not None:
+            tail = ""
+            if log_path.is_file():
+                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                tail = "\n".join(lines[-50:])
+            raise RuntimeError(
+                "bpy_server process exited during startup.\n"
+                f"Last lines from {log_path}:\n{tail}\n"
+                "Tip: run `.tokenrig-venv/bin/python bpy_server.py` in a terminal."
+            )
         try:
             requests.get(f"{BPY_SERVER}/ping", timeout=1)
             print("[TokenRig] bpy_server is ready")
             return
         except Exception:
             if time.time() - t0 > timeout:
-                raise RuntimeError("bpy_server failed to start")
+                tail = ""
+                if log_path.is_file():
+                    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    tail = "\n".join(lines[-50:])
+                raise RuntimeError(
+                    f"bpy_server failed to start within {timeout:.0f}s.\n"
+                    f"Last lines from {log_path}:\n{tail}\n"
+                    "On Linux install: sudo apt install libgl1 libglib2.0-0 libxrender1 libxext6 libxkbcommon0"
+                )
             time.sleep(0.5)
 
 

@@ -139,19 +139,23 @@ def create_app() -> bottle.Bottle:
 
 
 def main():
-    print(f"[TokenRig Worker] plugin root: {PLUGIN_ROOT}")
-    start_bpy_server(python=sys.executable, cwd=PLUGIN_ROOT)
-    wait_for_bpy_server(timeout=60)
+    try:
+        print(f"[TokenRig Worker] plugin root: {PLUGIN_ROOT}")
+        start_bpy_server(python=sys.executable, cwd=PLUGIN_ROOT)
+        wait_for_bpy_server(timeout=120)
 
-    app = create_app()
+        app = create_app()
 
-    def run_server():
-        bottle.run(app, host=WORKER_HOST, port=WORKER_PORT, server="tornado", quiet=False)
+        def run_server():
+            bottle.run(app, host=WORKER_HOST, port=WORKER_PORT, server="tornado", quiet=False)
 
-    threading.Thread(target=run_server, daemon=False).start()
-    print(f"[TokenRig Worker] listening on http://{WORKER_HOST}:{WORKER_PORT}")
+        threading.Thread(target=run_server, daemon=False).start()
+        print(f"[TokenRig Worker] listening on http://{WORKER_HOST}:{WORKER_PORT}")
 
-    threading.Event().wait()
+        threading.Event().wait()
+    except Exception:
+        traceback.print_exc()
+        raise
 
 
 if __name__ == "__main__":

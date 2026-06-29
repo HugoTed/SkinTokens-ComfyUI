@@ -13,14 +13,16 @@ def popen_detached(
     *,
     cwd: Optional[str] = None,
     env: Optional[dict] = None,
+    stdout: Union[int, Any, None] = None,
+    stderr: Union[int, Any, None] = None,
 ) -> subprocess.Popen:
     """Start a child process in its own process group / session."""
     popen_kwargs: Dict[str, Any] = dict(
         args=args,
         cwd=cwd,
         env=env,
-        stdout=None,
-        stderr=None,
+        stdout=stdout,
+        stderr=stderr,
     )
     if os.name == "nt":
         popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP

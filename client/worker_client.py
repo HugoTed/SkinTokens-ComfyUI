@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import atexit
 import json
+import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -15,6 +17,34 @@ from config import get_plugin_root, get_worker_python, get_worker_url, load_conf
 from process_util import popen_detached, terminate_process_tree
 
 _worker_proc = None
+
+
+def _worker_log_path() -> Path:
+    return get_plugin_root() / "tokenrig-worker.log"
+
+
+def _read_log_tail(path: Path, max_lines: int = 50) -> str:
+    if not path.is_file():
+        return (
+            f"No log at {path}. Run manually:\n"
+            f"  {get_worker_python() or '<venv>/bin/python'} worker/server.py"
+        )
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        tail = "\n".join(lines[-max_lines:])
+        return f"Last lines from {path}:\n{tail}"
+    except OSError as exc:
+        return f"Could not read {path}: {exc}"
+
+
+def _worker_exit_message(exit_code: Optional[int]) -> str:
+    log_tail = _read_log_tail(_worker_log_path())
+    code = "unknown" if exit_code is None else str(exit_code)
+    return (
+        f"TokenRig worker process exited before becoming ready (exit code {code}).\n"
+        f"{log_tail}\n"
+        "Tip: run `.tokenrig-venv/bin/python worker/server.py` in a terminal for full output."
+    )
 
 
 def ping_worker(timeout: float = 1.0) -> bool:
@@ -38,11 +68,17 @@ def _start_worker_process():
         raise RuntimeError("TokenRig worker venv is not installed. Run bootstrap or TokenRig Setup node.")
 
     plugin_root = get_plugin_root()
+    log_path = _worker_log_path()
+    log_file = open(log_path, "a", encoding="utf-8")
+    log_file.write(f"\n--- worker start {datetime.now().isoformat()} ---\n")
+    log_file.flush()
     proc = popen_detached(
         [str(worker_python), str(plugin_root / "worker" / "server.py")],
         cwd=str(plugin_root),
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
     )
-    print(f"[TokenRig Client] worker started (pid={proc.pid})")
+    print(f"[TokenRig Client] worker started (pid={proc.pid}), log: {log_path}")
     _worker_proc = proc
 
     def cleanup():
@@ -63,11 +99,12 @@ def wait_for_worker(timeout: Optional[float] = None) -> None:
             return
         proc = _worker_proc
         if proc is not None and proc.poll() is not None:
-            raise RuntimeError("TokenRig worker process exited before becoming ready.")
+            raise RuntimeError(_worker_exit_message(proc.returncode))
         if time.time() - t0 > timeout:
             raise RuntimeError(
-                f"TokenRig worker failed to start within {timeout:.0f}s. "
-                "Check console logs or run bootstrap.py manually."
+                f"TokenRig worker failed to start within {timeout:.0f}s.\n"
+                f"{_read_log_tail(_worker_log_path())}\n"
+                "Tip: run `.tokenrig-venv/bin/python worker/server.py` in a terminal."
             )
         time.sleep(1.0)
 

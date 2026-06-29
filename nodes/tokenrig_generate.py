@@ -3,6 +3,20 @@ from pathlib import Path
 from config import get_default_model_ckpt
 from client.worker_client import ensure_worker_running, infer
 
+try:
+    from comfy_api.latest import Types as ComfyTypes
+except ImportError:
+    ComfyTypes = None
+
+
+def _file3d_from_path(path: str, export_format: str):
+    if ComfyTypes is None:
+        raise RuntimeError(
+            "ComfyUI File3D types are not available. "
+            "Upgrade ComfyUI to a version with built-in 3D support (Save 3D Model / Preview 3D)."
+        )
+    return ComfyTypes.File3D(path, file_format=export_format)
+
 
 class TokenRigGenerate:
     """Generate rigged mesh (GLB or FBX) from an input mesh via the TokenRig worker."""
@@ -31,8 +45,8 @@ class TokenRigGenerate:
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("output_path", "status")
+    RETURN_TYPES = ("STRING", "STRING", "FILE_3D_GLB")
+    RETURN_NAMES = ("output_path", "status", "model_3d")
     FUNCTION = "run"
     CATEGORY = "3d/tokenrig"
     OUTPUT_NODE = True
@@ -84,4 +98,5 @@ class TokenRigGenerate:
         status = f"Rigged {export_format.upper()} saved to: {result_path}"
         if setup_status:
             status = f"{setup_status}\n{status}"
-        return (result_path, status)
+        model_3d = _file3d_from_path(str(Path(result_path).resolve()), export_format)
+        return (result_path, status, model_3d)
