@@ -146,9 +146,9 @@ def _post_json(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
-def load_model(model_ckpt: str, hf_path: Optional[str] = None) -> str:
+def load_model(model_ckpt: str, hf_path: Optional[str] = None) -> tuple[str, str]:
     data = _post_json("/load_model", {"model_ckpt": model_ckpt, "hf_path": hf_path})
-    return data.get("message", "Model loaded.")
+    return data.get("message", "Model loaded."), data.get("model_ckpt", model_ckpt)
 
 
 def infer(

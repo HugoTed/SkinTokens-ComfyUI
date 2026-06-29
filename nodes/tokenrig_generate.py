@@ -5,6 +5,8 @@ from pathlib import Path
 from config import get_default_model_ckpt
 from client.worker_client import ensure_worker_running, infer
 
+_LOAD_STATUS_MESSAGES = frozenset({"Model loaded.", "Model already loaded."})
+
 try:
     from comfy_api.latest import Types as ComfyTypes
 except ImportError:
@@ -155,10 +157,13 @@ class TokenRigGenerate:
             out_path.parent.mkdir(parents=True, exist_ok=True)
 
         hf = None if hf_path in ("None", "") else hf_path
+        ckpt = model_ckpt.strip()
+        if ckpt in _LOAD_STATUS_MESSAGES or not ckpt:
+            ckpt = str(get_default_model_ckpt())
         result_path = infer(
             mesh_path=mesh,
             output_path=out,
-            model_ckpt=model_ckpt,
+            model_ckpt=ckpt,
             hf_path=hf,
             export_format=export_format,
             top_k=top_k,

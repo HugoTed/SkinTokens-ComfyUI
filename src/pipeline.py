@@ -65,7 +65,21 @@ transform = None
 CURRENT_MODEL_CKPT: Optional[str] = None
 CURRENT_HF_PATH: Optional[str] = None
 
+_LOAD_STATUS_MESSAGES = frozenset({"Model loaded.", "Model already loaded."})
+
 _bpy_proc = None
+
+
+def resolve_model_ckpt(model_ckpt: Optional[str]) -> str:
+    """Map ComfyUI status strings / empty values to a real checkpoint path."""
+    from config import get_default_model_ckpt
+
+    ckpt = (model_ckpt or "").strip()
+    if ckpt in _LOAD_STATUS_MESSAGES or not ckpt:
+        if CURRENT_MODEL_CKPT:
+            return CURRENT_MODEL_CKPT
+        return str(get_default_model_ckpt())
+    return ckpt
 
 
 def get_plugin_root() -> Path:
@@ -140,6 +154,7 @@ def load_model(model_ckpt: str, hf_path: Optional[str] = None) -> Tuple[str, str
     global model, tokenizer, transform, CURRENT_MODEL_CKPT, CURRENT_HF_PATH
     if hf_path in ("None", ""):
         hf_path = None
+    model_ckpt = resolve_model_ckpt(model_ckpt)
     if model is not None and model_ckpt == CURRENT_MODEL_CKPT and hf_path == CURRENT_HF_PATH:
         return ("Model already loaded.", model_ckpt)
 
@@ -200,7 +215,7 @@ def run_rig(
 ) -> List[Path]:
     assert len(filepaths) == len(output_paths)
 
-    load_model(model_ckpt, hf_path)
+    load_model(resolve_model_ckpt(model_ckpt), hf_path)
 
     datapath = {
         "data_name": None,

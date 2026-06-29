@@ -15,13 +15,13 @@ class TokenRigLoadModel:
             }
         }
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("status",)
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("status", "model_ckpt")
     FUNCTION = "run"
     CATEGORY = "3d/tokenrig"
 
     def run(self, model_ckpt: str, hf_path: str):
         ensure_worker_running()
         hf = None if hf_path in ("None", "") else hf_path
-        message = load_model(model_ckpt, hf_path=hf)
-        return (message,)
+        message, ckpt = load_model(model_ckpt, hf_path=hf)
+        return (message, ckpt)
