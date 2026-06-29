@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import torch.nn.functional as F
 
+_USE_FLASH_ATTN = False
+
+
 try:
     from flash_attn_interface import flash_attn_func as _flash_attn_func  # type: ignore
+
+    _USE_FLASH_ATTN = True
 
     def flash_attn_func(q, k, v, **kwargs):
         res = _flash_attn_func(q, k, v, **kwargs)
@@ -15,6 +20,8 @@ try:
 except ImportError:
     try:
         from flash_attn.flash_attn_interface import flash_attn_func as _flash_attn_func  # type: ignore
+
+        _USE_FLASH_ATTN = True
 
         def flash_attn_func(q, k, v, **kwargs):
             res = _flash_attn_func(q, k, v, **kwargs)
@@ -33,3 +40,8 @@ except ImportError:
                 v_t = v_t.repeat_interleave(repeat_factor, dim=1)
             out = F.scaled_dot_product_attention(q_t, k_t, v_t)
             return out.transpose(1, 2), None
+
+
+def get_transformers_attn_implementation() -> str:
+    """Return flash_attention_2 when flash-attn is installed, else PyTorch SDPA."""
+    return "flash_attention_2" if _USE_FLASH_ATTN else "sdpa"

@@ -8,6 +8,7 @@ import torch
 
 from ..rig_package.info.asset import Asset
 from ..model.tokenrig import TokenRig
+from ..model.flash_attn_util import get_transformers_attn_implementation
 
 PORT = 59875
 SERVER = f"http://localhost:{PORT}"
@@ -76,7 +77,7 @@ def get_model(
         a = AutoModel.from_pretrained(
             hf_path,
             local_files_only=True,
-            _attn_implementation="flash_attention_2",
+            attn_implementation=get_transformers_attn_implementation(),
             torch_dtype=torch.bfloat16,
         )
         model.transformer.model.load_state_dict(a.state_dict())

@@ -14,6 +14,7 @@ LLM_LOCAL_DIR = Path("models/Qwen3-0.6B")
 
 from .skin_vae_model import SkinVAEModel
 from .skin_vae.autoencoders import SkinFSQCVAEModel
+from .flash_attn_util import get_transformers_attn_implementation
 from .spec import ModelSpec, ModelInput, VaeInput, TokenRigResult
 from .parse_encoder import MAP_MESH_ENCODER, get_mesh_encoder
 
@@ -98,7 +99,13 @@ class TokenRig(ModelSpec):
         llm_config.torch_dtype = torch.bfloat16
         llm_config.pre_norm = True
         self.llm_config = llm_config
-        self.transformer = AutoModelForCausalLM.from_config(config=llm_config, attn_implementation="flash_attention_2").to(torch.bfloat16)
+        attn_impl = get_transformers_attn_implementation()
+        if attn_impl != "flash_attention_2":
+            print(f"[TokenRig] flash-attn not installed; using transformers attn_implementation={attn_impl!r}")
+        self.transformer = AutoModelForCausalLM.from_config(
+            config=llm_config,
+            attn_implementation=attn_impl,
+        ).to(torch.bfloat16)
         
         self.output_proj = nn.Sequential(
             nn.Linear(self.mesh_encoder.width, self.hidden_size),
