@@ -20,6 +20,69 @@ if str(PLUGIN_ROOT) not in sys.path:
 os.chdir(PLUGIN_ROOT)
 os.environ.setdefault("XFORMERS_IGNORE_FLASH_VERSION_CHECK", "1")
 
+
+class _SafeStream:
+    """stdout/stderr proxy that falls back to a log file when the console dies.
+
+    On Windows, a worker whose parent console is gone (started hidden,
+    detached, or from a terminal that has since closed) keeps invalid stdio
+    handles: any print() or tqdm progress update then raises
+    ``OSError: [Errno 22] Invalid argument``, failing whole /infer requests.
+    The console can disappear at any time, so every write/flush is guarded.
+    """
+
+    _log_file = None
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    @classmethod
+    def _log(cls):
+        if cls._log_file is None:
+            cls._log_file = open(
+                PLUGIN_ROOT / "tokenrig-worker.log",
+                "a",
+                buffering=1,
+                encoding="utf-8",
+                errors="replace",
+            )
+        return cls._log_file
+
+    def write(self, s):
+        try:
+            return self._stream.write(s)
+        except (OSError, ValueError, AttributeError):
+            try:
+                return self._log().write(s)
+            except OSError:
+                return len(s)
+
+    def flush(self):
+        try:
+            self._stream.flush()
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    def isatty(self):
+        try:
+            return self._stream.isatty()
+        except (OSError, ValueError, AttributeError):
+            return False
+
+    def fileno(self):
+        return self._stream.fileno()
+
+    @property
+    def encoding(self):
+        return getattr(self._stream, "encoding", "utf-8")
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+sys.stdout = _SafeStream(sys.stdout)
+sys.stderr = _SafeStream(sys.stderr)
+
 from config import get_default_model_ckpt, load_config, normalize_hf_path, normalize_output_path  # noqa: E402
 from src.pipeline import (  # noqa: E402
     is_model_loaded,
