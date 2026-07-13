@@ -61,7 +61,9 @@ def run():
         response.content_type = 'application/octet-stream'  # type: ignore
         return payload
     
-    def run_server(): bottle.run(app, host='0.0.0.0', port=BPY_PORT, server='tornado')
+    # Bind IPv4 loopback only — avoids Windows dual-stack EADDRINUSE (10048)
+    # when Tornado also tries :: on 0.0.0.0.
+    def run_server(): bottle.run(app, host='127.0.0.1', port=BPY_PORT, server='tornado')
     threading.Thread(target=run_server, daemon=False).start()
     
     while True:

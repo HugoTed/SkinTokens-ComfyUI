@@ -16,13 +16,13 @@ import requests
 from torch import Tensor
 from tqdm import tqdm
 
-from process_util import popen_detached, terminate_process_tree
+from process_util import free_tcp_port, popen_detached, terminate_process_tree
 
 from .data.dataset import DatasetConfig, RigDatasetModule
 from .data.transform import Transform
 from .data.vertex_group import voxel_skin
 from .model.tokenrig import TokenRigResult
-from .server.spec import BPY_SERVER, get_model, object_to_bytes, bytes_to_object
+from .server.spec import BPY_PORT, BPY_SERVER, get_model, object_to_bytes, bytes_to_object
 from .tokenizer.parse import get_tokenizer
 
 os.environ.setdefault("XFORMERS_IGNORE_FLASH_VERSION_CHECK", "1")
@@ -90,10 +90,29 @@ def _bpy_log_path(plugin_root: Path) -> Path:
     return plugin_root / "tokenrig-bpy.log"
 
 
+def ping_bpy_server(timeout: float = 1.0) -> bool:
+    try:
+        resp = requests.get(f"{BPY_SERVER}/ping", timeout=timeout)
+        return resp.status_code == 200 and resp.text.strip() == "pong"
+    except Exception:
+        return False
+
+
 def start_bpy_server(python: Optional[str] = None, cwd: Optional[Path] = None):
     global _bpy_proc
     if _bpy_proc is not None and _bpy_proc.poll() is None:
         return _bpy_proc
+
+    # Reuse a healthy leftover server (common after a previous worker crash).
+    if ping_bpy_server(timeout=1.0):
+        print(f"[TokenRig] bpy_server already running on port {BPY_PORT}")
+        return None
+
+    # Stale listener on the fixed port → WinError 10048 / bind failure.
+    killed = free_tcp_port(BPY_PORT)
+    if killed:
+        print(f"[TokenRig] freed port {BPY_PORT} (killed pids: {killed})")
+        time.sleep(0.5)
 
     plugin_root = cwd or get_plugin_root()
     executable = python or sys.executable
@@ -130,24 +149,25 @@ def wait_for_bpy_server(timeout: float = 30) -> None:
             raise RuntimeError(
                 "bpy_server process exited during startup.\n"
                 f"Last lines from {log_path}:\n{tail}\n"
-                "Tip: run `.tokenrig-venv/bin/python bpy_server.py` in a terminal."
+                "Tip: run `.tokenrig-venv/bin/python bpy_server.py` in a terminal.\n"
+                f"If you see WinError 10048, another process is using port {BPY_PORT}; "
+                f"kill it or change BPY_PORT."
             )
-        try:
-            requests.get(f"{BPY_SERVER}/ping", timeout=1)
+        if ping_bpy_server(timeout=1.0):
             print("[TokenRig] bpy_server is ready")
             return
-        except Exception:
-            if time.time() - t0 > timeout:
-                tail = ""
-                if log_path.is_file():
-                    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-                    tail = "\n".join(lines[-50:])
-                raise RuntimeError(
-                    f"bpy_server failed to start within {timeout:.0f}s.\n"
-                    f"Last lines from {log_path}:\n{tail}\n"
-                    "On Linux install: sudo apt install libgl1 libglib2.0-0 libxrender1 libxext6 libxkbcommon0"
-                )
-            time.sleep(0.5)
+        if time.time() - t0 > timeout:
+            tail = ""
+            if log_path.is_file():
+                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                tail = "\n".join(lines[-50:])
+            raise RuntimeError(
+                f"bpy_server failed to start within {timeout:.0f}s.\n"
+                f"Last lines from {log_path}:\n{tail}\n"
+                f"If the log shows WinError 10048, port {BPY_PORT} is already in use.\n"
+                "On Linux install: sudo apt install libgl1 libglib2.0-0 libxrender1 libxext6 libxkbcommon0"
+            )
+        time.sleep(0.5)
 
 
 def load_model(model_ckpt: str, hf_path: Optional[str] = None) -> Tuple[str, str]:
