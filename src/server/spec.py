@@ -14,8 +14,16 @@ PORT = 59875
 SERVER = f"http://localhost:{PORT}"
 TMP_CKPT_DIR = "./tmp_ckpt"
 
-BPY_PORT = 59876
-BPY_SERVER = f"http://localhost:{BPY_PORT}"
+def _resolve_bpy_port() -> int:
+    try:
+        from config import get_bpy_port
+        return get_bpy_port()
+    except Exception:
+        return int(os.environ.get("TOKENRIG_BPY_PORT", "59878"))
+
+
+BPY_PORT = _resolve_bpy_port()
+BPY_SERVER = f"http://127.0.0.1:{BPY_PORT}"
 
 @dataclass
 class TensorPacket:

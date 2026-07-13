@@ -7,6 +7,9 @@
     "auto_install": true,
     "startup_timeout": 300
   },
+  "bpy": {
+    "port": 59878
+  },
   "model": {
     "auto_download": true,
     "default_ckpt": "experiments/articulation_xl_quantization_256_token_4/grpo_1400.ckpt",

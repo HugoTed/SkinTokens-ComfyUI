@@ -11,7 +11,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parent
 VENV_DIR_NAME = ".tokenrig-venv"
 WORKER_HOST = "127.0.0.1"
 WORKER_PORT = 59877
-BPY_PORT = 59876
+BPY_PORT = 59878  # was 59876; override via config.json "bpy.port" or TOKENRIG_BPY_PORT
 
 DEFAULT_MODEL_CKPT = "experiments/articulation_xl_quantization_256_token_4/grpo_1400.ckpt"
 DEFAULT_HF_PATH = None
@@ -24,6 +24,9 @@ DEFAULTS: Dict[str, Any] = {
         "auto_start": True,
         "auto_install": True,
         "startup_timeout": 300,
+    },
+    "bpy": {
+        "port": BPY_PORT,
     },
     "model": {
         "auto_download": True,
@@ -95,6 +98,18 @@ def get_worker_url(config: Dict[str, Any] | None = None) -> str:
     host = config["worker"]["host"]
     port = config["worker"]["port"]
     return f"http://{host}:{port}"
+
+
+def get_bpy_port(config: Dict[str, Any] | None = None) -> int:
+    env = os.environ.get("TOKENRIG_BPY_PORT")
+    if env:
+        return int(env)
+    config = config or load_config()
+    return int(config.get("bpy", {}).get("port", BPY_PORT))
+
+
+def get_bpy_url(config: Dict[str, Any] | None = None) -> str:
+    return f"http://127.0.0.1:{get_bpy_port(config)}"
 
 
 def get_default_model_ckpt(config: Dict[str, Any] | None = None) -> Path:
