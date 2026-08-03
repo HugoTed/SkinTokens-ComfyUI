@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -68,6 +69,8 @@ CURRENT_HF_PATH: Optional[str] = None
 _LOAD_STATUS_MESSAGES = frozenset({"Model loaded.", "Model already loaded."})
 
 _bpy_proc = None
+_bpy_lock = threading.RLock()
+_bpy_atexit_registered = False
 
 
 def resolve_model_ckpt(model_ckpt: Optional[str]) -> str:
@@ -98,43 +101,68 @@ def ping_bpy_server(timeout: float = 1.0) -> bool:
         return False
 
 
-def start_bpy_server(python: Optional[str] = None, cwd: Optional[Path] = None):
+def stop_bpy_server() -> None:
+    """Terminate tracked bpy_server and free its listen port."""
     global _bpy_proc
-    if _bpy_proc is not None and _bpy_proc.poll() is None:
-        return _bpy_proc
+    with _bpy_lock:
+        proc = _bpy_proc
+        _bpy_proc = None
+        if proc is not None and proc.poll() is None:
+            print(f"[TokenRig] Stopping bpy_server (pid={proc.pid})")
+            terminate_process_tree(proc)
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+        killed = free_tcp_port(BPY_PORT)
+        if killed:
+            print(f"[TokenRig] freed port {BPY_PORT} (killed pids: {killed})")
+            time.sleep(0.5)
 
-    # Reuse a healthy leftover server (common after a previous worker crash).
-    if ping_bpy_server(timeout=1.0):
-        print(f"[TokenRig] bpy_server already running on port {BPY_PORT}")
-        return None
 
-    # Stale listener on the fixed port → WinError 10048 / bind failure.
-    killed = free_tcp_port(BPY_PORT)
-    if killed:
-        print(f"[TokenRig] freed port {BPY_PORT} (killed pids: {killed})")
-        time.sleep(0.5)
+def start_bpy_server(python: Optional[str] = None, cwd: Optional[Path] = None):
+    global _bpy_proc, _bpy_atexit_registered
+    with _bpy_lock:
+        if _bpy_proc is not None and _bpy_proc.poll() is None and ping_bpy_server(timeout=1.0):
+            return _bpy_proc
 
-    plugin_root = cwd or get_plugin_root()
-    executable = python or sys.executable
-    log_path = _bpy_log_path(plugin_root)
-    log_file = open(log_path, "a", encoding="utf-8")
-    log_file.write(f"\n--- bpy_server start {datetime.now().isoformat()} ---\n")
-    log_file.flush()
-    proc = popen_detached(
-        [executable, str(plugin_root / "bpy_server.py")],
-        cwd=str(plugin_root),
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-    )
-    print(f"[TokenRig] bpy_server started (pid={proc.pid}), log: {log_path}")
-    _bpy_proc = proc
+        # Reuse a healthy leftover server (common after a previous worker crash).
+        if ping_bpy_server(timeout=1.0):
+            print(f"[TokenRig] bpy_server already running on port {BPY_PORT}")
+            return None
 
-    def cleanup():
-        print(f"[TokenRig] Terminating bpy_server (pid={proc.pid})")
-        terminate_process_tree(proc)
+        # Drop a dead tracked handle before binding again.
+        if _bpy_proc is not None and _bpy_proc.poll() is not None:
+            _bpy_proc = None
 
-    atexit.register(cleanup)
-    return proc
+        # Stale listener on the fixed port → WinError 10048 / bind failure.
+        killed = free_tcp_port(BPY_PORT)
+        if killed:
+            print(f"[TokenRig] freed port {BPY_PORT} (killed pids: {killed})")
+            time.sleep(0.5)
+
+        plugin_root = cwd or get_plugin_root()
+        executable = python or sys.executable
+        log_path = _bpy_log_path(plugin_root)
+        log_file = open(log_path, "a", encoding="utf-8")
+        log_file.write(f"\n--- bpy_server start {datetime.now().isoformat()} ---\n")
+        log_file.flush()
+        proc = popen_detached(
+            [executable, str(plugin_root / "bpy_server.py")],
+            cwd=str(plugin_root),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+        print(f"[TokenRig] bpy_server started (pid={proc.pid}), log: {log_path}")
+        _bpy_proc = proc
+
+        if not _bpy_atexit_registered:
+            def cleanup():
+                stop_bpy_server()
+
+            atexit.register(cleanup)
+            _bpy_atexit_registered = True
+        return proc
 
 
 def wait_for_bpy_server(timeout: float = 30) -> None:
@@ -168,6 +196,34 @@ def wait_for_bpy_server(timeout: float = 30) -> None:
                 "On Linux install: sudo apt install libgl1 libglib2.0-0 libxrender1 libxext6 libxkbcommon0"
             )
         time.sleep(0.5)
+
+
+def restart_bpy_server(
+    python: Optional[str] = None,
+    cwd: Optional[Path] = None,
+    *,
+    timeout: float = 120,
+) -> None:
+    """Force-restart bpy_server after a crash so later jobs are not blocked."""
+    with _bpy_lock:
+        if ping_bpy_server(timeout=1.0):
+            return
+        print("[TokenRig] bpy_server not ready — restarting")
+        stop_bpy_server()
+        start_bpy_server(python=python, cwd=cwd)
+        wait_for_bpy_server(timeout=timeout)
+
+
+def ensure_bpy_server(
+    python: Optional[str] = None,
+    cwd: Optional[Path] = None,
+    *,
+    timeout: float = 120,
+) -> None:
+    """No-op when healthy; otherwise restart bpy_server and wait until ready."""
+    if ping_bpy_server(timeout=1.0):
+        return
+    restart_bpy_server(python=python, cwd=cwd, timeout=timeout)
 
 
 def load_model(model_ckpt: str, hf_path: Optional[str] = None) -> Tuple[str, str]:
@@ -235,6 +291,9 @@ def run_rig(
     hf_path: Optional[str],
 ) -> List[Path]:
     assert len(filepaths) == len(output_paths)
+
+    # 推理前确认 bpy 可用；坏模型炸死后自动拉起，避免堵死后续任务。
+    ensure_bpy_server(timeout=120)
 
     load_model(resolve_model_ckpt(model_ckpt), hf_path)
 

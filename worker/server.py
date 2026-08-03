@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -85,9 +86,12 @@ sys.stderr = _SafeStream(sys.stderr)
 
 from config import get_default_model_ckpt, load_config, normalize_hf_path, normalize_output_path  # noqa: E402
 from src.pipeline import (  # noqa: E402
+    ensure_bpy_server,
     is_model_loaded,
     load_model,
+    ping_bpy_server,
     resolve_output_path,
+    restart_bpy_server,
     run_rig,
     start_bpy_server,
     wait_for_bpy_server,
@@ -96,6 +100,46 @@ from src.pipeline import (  # noqa: E402
 _config = load_config()
 WORKER_HOST = _config["worker"]["host"]
 WORKER_PORT = _config["worker"]["port"]
+_BPY_WATCHDOG_SECONDS = 5.0
+
+
+def _looks_like_bpy_crash(exc: BaseException, tb: str) -> bool:
+    text = f"{exc}\n{tb}".lower()
+    needles = (
+        "connection aborted",
+        "connection reset",
+        "connectionrefused",
+        "remote end closed",
+        "remotedisconnected",
+        "10054",
+        "bpy_server",
+        "failed to establish a new connection",
+        "max retries exceeded",
+    )
+    return any(n in text for n in needles)
+
+
+def _recover_bpy_after_failure(exc: BaseException, tb: str) -> None:
+    if not _looks_like_bpy_crash(exc, tb):
+        return
+    try:
+        print("[TokenRig] infer failed with bpy connection error — recovering bpy_server")
+        restart_bpy_server(python=sys.executable, cwd=PLUGIN_ROOT, timeout=120)
+    except Exception:
+        traceback.print_exc()
+
+
+def _bpy_watchdog_loop() -> None:
+    """Periodic heal: crashed bpy must not leave the worker degraded forever."""
+    while True:
+        time.sleep(_BPY_WATCHDOG_SECONDS)
+        try:
+            if ping_bpy_server(timeout=1.0):
+                continue
+            print("[TokenRig] watchdog: bpy_server down — restarting")
+            restart_bpy_server(python=sys.executable, cwd=PLUGIN_ROOT, timeout=120)
+        except Exception:
+            traceback.print_exc()
 
 
 def _read_json_body() -> dict:
@@ -116,15 +160,7 @@ def create_app() -> bottle.Bottle:
 
     @app.route("/health", method="GET")  # type: ignore[misc]
     def health():
-        import requests
-
-        from src.server.spec import BPY_SERVER
-
-        bpy_ok = False
-        try:
-            bpy_ok = requests.get(f"{BPY_SERVER}/ping", timeout=1).text == "pong"
-        except Exception:
-            bpy_ok = False
+        bpy_ok = ping_bpy_server(timeout=1.0)
         return _json_response(
             {
                 "status": "ok" if bpy_ok else "degraded",
@@ -132,6 +168,27 @@ def create_app() -> bottle.Bottle:
                 "model_loaded": is_model_loaded(),
             }
         )
+
+    @app.route("/restart_bpy", method="POST")  # type: ignore[misc]
+    def restart_bpy_endpoint():
+        """让编排端在发现 degraded 时主动拉起 bpy，避免干等。"""
+        try:
+            restart_bpy_server(python=sys.executable, cwd=PLUGIN_ROOT, timeout=120)
+            ready = ping_bpy_server(timeout=1.0)
+            return _json_response(
+                {
+                    "status": "ok" if ready else "degraded",
+                    "bpy_ready": ready,
+                    "model_loaded": is_model_loaded(),
+                }
+            )
+        except Exception as exc:
+            tb = traceback.format_exc()
+            print(tb)
+            return _json_response(
+                {"status": "error", "error": str(exc), "traceback": tb},
+                status=500,
+            )
 
     @app.route("/load_model", method="POST")  # type: ignore[misc]
     def load_model_endpoint():
@@ -151,6 +208,9 @@ def create_app() -> bottle.Bottle:
     @app.route("/infer", method="POST")  # type: ignore[misc]
     def infer_endpoint():
         try:
+            # 坏模型可能已把 bpy 打挂；先恢复再接任务，避免堵死队列。
+            ensure_bpy_server(python=sys.executable, cwd=PLUGIN_ROOT, timeout=120)
+
             data = _read_json_body()
             mesh_path = Path(data["mesh_path"]).resolve()
             if not mesh_path.is_file():
@@ -194,6 +254,7 @@ def create_app() -> bottle.Bottle:
         except Exception as exc:
             tb = traceback.format_exc()
             print(tb)
+            _recover_bpy_after_failure(exc, tb)
             return _json_response({"status": "error", "error": str(exc), "traceback": tb}, status=500)
 
     return app
@@ -211,7 +272,13 @@ def main():
             bottle.run(app, host=WORKER_HOST, port=WORKER_PORT, server="tornado", quiet=False)
 
         threading.Thread(target=run_server, daemon=False).start()
+        threading.Thread(
+            target=_bpy_watchdog_loop,
+            name="tokenrig-bpy-watchdog",
+            daemon=True,
+        ).start()
         print(f"[TokenRig Worker] listening on http://{WORKER_HOST}:{WORKER_PORT}")
+        print("[TokenRig Worker] bpy watchdog enabled")
 
         threading.Event().wait()
     except Exception:
