@@ -252,28 +252,73 @@ def is_model_loaded() -> bool:
     return model is not None
 
 
-def post_bpy_payload(endpoint: str, payload):
-    payload_path = None
-    try:
-        with tempfile.NamedTemporaryFile(prefix=f"skintokens_{endpoint}_", suffix=".pt", delete=False) as f:
-            f.write(object_to_bytes(payload))
-            payload_path = f.name
-        request_payload = {"payload_path": payload_path}
-        response = requests.post(
-            f"{BPY_SERVER}/{endpoint}",
-            data=object_to_bytes(request_payload),
-        )
-        response.raise_for_status()
-        result = bytes_to_object(response.content)
-        if isinstance(result, dict) and result.get("error") is not None:
-            raise RuntimeError(result.get("traceback") or result["error"])
-        return result
-    finally:
-        if payload_path is not None:
-            try:
-                os.remove(payload_path)
-            except OSError:
-                pass
+def looks_like_bpy_connection_error(exc: BaseException) -> bool:
+    """Detect bpy_server crash / forced close (Windows 10054 etc.)."""
+    text = str(exc).lower()
+    needles = (
+        "connection aborted",
+        "connection reset",
+        "connectionrefused",
+        "remote end closed",
+        "remotedisconnected",
+        "10054",
+        "failed to establish a new connection",
+        "max retries exceeded",
+        "bpy server failed",
+    )
+    return any(needle in text for needle in needles)
+
+
+def post_bpy_payload(endpoint: str, payload, *, retries: int = 1):
+    """POST to bpy_server; on connection drop, restart bpy once and retry.
+
+    Transfer/export often fails after GPU work when bpy dies mid-request.
+    Retrying here avoids re-running TokenRig inference.
+    """
+    last_exc: Optional[BaseException] = None
+    for attempt in range(retries + 1):
+        payload_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                prefix=f"skintokens_{endpoint}_",
+                suffix=".pt",
+                delete=False,
+            ) as f:
+                f.write(object_to_bytes(payload))
+                payload_path = f.name
+            request_payload = {"payload_path": payload_path}
+            response = requests.post(
+                f"{BPY_SERVER}/{endpoint}",
+                data=object_to_bytes(request_payload),
+            )
+            response.raise_for_status()
+            result = bytes_to_object(response.content)
+            if isinstance(result, dict) and result.get("error") is not None:
+                raise RuntimeError(result.get("traceback") or result["error"])
+            return result
+        except Exception as exc:
+            last_exc = exc
+            if attempt < retries and looks_like_bpy_connection_error(exc):
+                print(
+                    f"[TokenRig] bpy {endpoint} connection lost "
+                    f"(attempt {attempt + 1}/{retries + 1}) — restarting and retrying"
+                )
+                try:
+                    restart_bpy_server(timeout=120)
+                except Exception:
+                    import traceback
+
+                    traceback.print_exc()
+                continue
+            raise
+        finally:
+            if payload_path is not None:
+                try:
+                    os.remove(payload_path)
+                except OSError:
+                    pass
+    assert last_exc is not None
+    raise last_exc
 
 
 def run_rig(
@@ -289,8 +334,11 @@ def run_rig(
     output_paths: List[Path],
     model_ckpt: str,
     hf_path: Optional[str],
+    transfer_target_paths: Optional[List[Optional[Path]]] = None,
 ) -> List[Path]:
     assert len(filepaths) == len(output_paths)
+    if transfer_target_paths is not None and len(transfer_target_paths) != len(filepaths):
+        raise ValueError("transfer_target_paths length must match filepaths")
 
     # 推理前确认 bpy 可用；坏模型炸死后自动拉起，避免堵死后续任务。
     ensure_bpy_server(timeout=120)
@@ -375,9 +423,12 @@ def run_rig(
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         if use_transfer:
+            transfer_target = asset.path
+            if transfer_target_paths is not None and transfer_target_paths[i] is not None:
+                transfer_target = str(Path(transfer_target_paths[i]).resolve())
             payload = dict(
                 source_asset=asset,
-                target_path=asset.path,
+                target_path=transfer_target,
                 export_path=str(out_path),
                 group_per_vertex=4,
             )

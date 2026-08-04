@@ -230,6 +230,18 @@ def create_app() -> bottle.Bottle:
             model_ckpt = data.get("model_ckpt") or str(get_default_model_ckpt())
             hf_path = normalize_hf_path(data.get("hf_path"))
 
+            transfer_target_raw = data.get("transfer_target_path")
+            transfer_targets = None
+            if transfer_target_raw:
+                transfer_target = Path(transfer_target_raw).resolve()
+                if not transfer_target.is_file():
+                    raise FileNotFoundError(f"Transfer target not found: {transfer_target}")
+                transfer_targets = [transfer_target]
+
+            use_transfer = bool(data.get("use_transfer", False))
+            if transfer_targets is not None:
+                use_transfer = True
+
             results = run_rig(
                 filepaths=[mesh_path],
                 top_k=int(data.get("top_k", 5)),
@@ -238,11 +250,12 @@ def create_app() -> bottle.Bottle:
                 repetition_penalty=float(data.get("repetition_penalty", 2.0)),
                 num_beams=int(data.get("num_beams", 10)),
                 use_skeleton=bool(data.get("use_skeleton", False)),
-                use_transfer=bool(data.get("use_transfer", False)),
+                use_transfer=use_transfer,
                 use_postprocess=bool(data.get("use_postprocess", False)),
                 output_paths=[out_path],
                 model_ckpt=model_ckpt,
                 hf_path=hf_path,
+                transfer_target_paths=transfer_targets,
             )
             return _json_response(
                 {

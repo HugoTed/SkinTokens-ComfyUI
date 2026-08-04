@@ -38,18 +38,41 @@ class BpyLazyAsset(LazyAsset):
 class BpyServerLazyAsset(LazyAsset):
     """workaround while bpy is working in multiple threads"""
     def load(self) -> 'Asset':
-        try:
-            asset = bytes_to_object(requests.get(f"{BPY_SERVER}/load", data=object_to_bytes(self.path)).content)
-            if isinstance(asset, str):
-                raise RuntimeError(f"bpy server failed: {asset}")
-            if isinstance(asset, dict) and asset.get("error") is not None:
-                raise RuntimeError(asset.get("traceback") or asset["error"])
-            assert isinstance(asset, Asset)
-            asset.cls = self.cls
-            asset.path = self.path
-            return asset
-        except Exception as e:
-            raise RuntimeError(f"bpy server failed to load {self.path!r}: {e}") from e
+        last_error: Optional[Exception] = None
+        for attempt in range(2):
+            try:
+                response = requests.get(
+                    f"{BPY_SERVER}/load",
+                    data=object_to_bytes(self.path),
+                    timeout=600,
+                )
+                response.raise_for_status()
+                asset = bytes_to_object(response.content)
+                if isinstance(asset, str):
+                    raise RuntimeError(f"bpy server failed: {asset}")
+                if isinstance(asset, dict) and asset.get("error") is not None:
+                    raise RuntimeError(asset.get("traceback") or asset["error"])
+                assert isinstance(asset, Asset)
+                asset.cls = self.cls
+                asset.path = self.path
+                return asset
+            except Exception as e:
+                last_error = e
+                # 延迟导入，避免与 pipeline 形成循环依赖。
+                from ..pipeline import looks_like_bpy_connection_error, restart_bpy_server
+
+                if attempt == 0 and looks_like_bpy_connection_error(e):
+                    print(
+                        f"[TokenRig] bpy load connection lost for {self.path!r} "
+                        "— restarting and retrying"
+                    )
+                    try:
+                        restart_bpy_server(timeout=120)
+                    except Exception:
+                        pass
+                    continue
+                break
+        raise RuntimeError(f"bpy server failed to load {self.path!r}: {last_error}") from last_error
 
 @dataclass
 class NpzLazyAsset(LazyAsset):
