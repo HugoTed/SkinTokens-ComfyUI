@@ -631,8 +631,19 @@ def make_asset(
         if root_tail is False:
             tails[root_id] = joints[root_id] + np.array([0., 0., length])
         bpy.ops.object.armature_add(enter_editmode=True)
-        armature = bpy.data.armatures.get('Armature')
+        # armature_add 默认对象/数据名为 Armature；若 asset 带有 BagBuddy_Rig 等名，
+        # 必须同步重命名，否则后续 bpy.data.objects[armature_name] 会 KeyError。
         armature_name = asset.armature_name if asset.armature_name is not None else 'Armature'
+        armature_obj = bpy.context.active_object
+        if armature_obj is not None and armature_obj.type == 'ARMATURE':
+            armature_obj.name = armature_name
+            armature = armature_obj.data
+            armature.name = armature_name
+        else:
+            armature = bpy.data.armatures.get('Armature')
+            if armature is None:
+                raise RuntimeError("armature_add did not create an Armature data-block")
+            armature.name = armature_name
         
         edit_bones = armature.edit_bones
         
@@ -675,8 +686,26 @@ def make_asset(
             extrude_bone(edit_bones, joint_names[u], pname, joints[u], tails[u])
         bpy.ops.object.mode_set(mode='OBJECT')
     
+    armature_b = None
+    if armature is not None:
+        armature_b = bpy.data.objects.get(armature_name)
+        if armature_b is None or armature_b.type != 'ARMATURE':
+            # 数据块名与对象名不一致时按 data 反查，避免 transfer 重跑 KeyError
+            armature_b = next(
+                (
+                    o for o in bpy.data.objects
+                    if o.type == 'ARMATURE' and o.data == armature
+                ),
+                None,
+            )
+        if armature_b is None:
+            raise RuntimeError(
+                f"armature object '{armature_name}' not found after make_asset"
+            )
+        armature_name = armature_b.name
+    
     # 3. if there is skin, set vertex groups
-    if asset.skin is not None and armature is not None and len(objects) > 0:
+    if asset.skin is not None and armature_b is not None and len(objects) > 0:
         # must set to object mode to enable parent_set
         bpy.ops.object.mode_set(mode='OBJECT')
         N = len(objects)
@@ -686,7 +715,6 @@ def make_asset(
         for i in range(N):
             skin = asset.skin[asset.get_vertex_slice(i)]
             ob = objects[mesh_names[i]]
-            armature_b = bpy.data.objects[armature_name]
             ob.select_set(True)
             armature_b.select_set(True)
             bpy.ops.object.parent_set(type='ARMATURE_NAME')
@@ -714,17 +742,17 @@ def make_asset(
         matrix_world = to_matrix(np.eye(4))
     else:
         matrix_world = to_matrix(asset.matrix_world)
-    if armature is not None:
-        bpy.data.objects[armature_name].matrix_world = matrix_world
+    if armature_b is not None:
+        armature_b.matrix_world = matrix_world
     
     # 4. if there is animation, set keyframes
-    if asset.matrix_basis is not None and asset.matrix_local is not None and armature is not None:
+    if asset.matrix_basis is not None and asset.matrix_local is not None and armature_b is not None:
         matrix_basis = asset.matrix_basis
         matrix_local = asset.matrix_local
         objects = bpy.data.objects
         for o in bpy.context.selected_objects:
             o.select_set(False)
-        armature = bpy.data.objects[armature_name]
+        armature = armature_b
         armature.select_set(True)
         armature.matrix_world = matrix_world
         frames = matrix_basis.shape[0]
@@ -825,13 +853,21 @@ def transfer_rigging(
     
     target_asset = BpyParser.load(filepath=target_path)
     bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+    # 目标若已绑骨（如重跑 SkinTokens），先卸掉旧 Armature 对象再删 data，
+    # 避免残留同名物体导致新建骨架变成 BagBuddy_Rig.001。
+    for obj in list(bpy.data.objects):
+        if obj.type == 'ARMATURE':
+            bpy.data.objects.remove(obj, do_unlink=True)
     data_types = [
         bpy.data.actions,
         bpy.data.armatures,
     ]
     for data_collection in data_types:
-        for item in data_collection:
+        for item in list(data_collection):
             data_collection.remove(item)
+    # 旧骨架已卸掉：勿再沿用目标文件里的 armature_name，否则 make_asset 会按
+    # BagBuddy_Rig 查找已删除对象；交由新建路径使用默认名或显式重命名。
+    target_asset.armature_name = None
     
     source_vertices = source_asset.vertices # (n, 3)
     target_vertices = target_asset.vertices # (m, 3)

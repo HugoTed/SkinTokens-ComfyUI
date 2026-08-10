@@ -204,11 +204,9 @@ def restart_bpy_server(
     *,
     timeout: float = 120,
 ) -> None:
-    """Force-restart bpy_server after a crash so later jobs are not blocked."""
+    """强制重启 bpy_server（代码热修 / 崩溃恢复都要真正杀进程再拉起）。"""
     with _bpy_lock:
-        if ping_bpy_server(timeout=1.0):
-            return
-        print("[TokenRig] bpy_server not ready — restarting")
+        print("[TokenRig] force-restarting bpy_server")
         stop_bpy_server()
         start_bpy_server(python=python, cwd=cwd)
         wait_for_bpy_server(timeout=timeout)
