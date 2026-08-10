@@ -420,7 +420,18 @@ def run_rig(
         out_path = output_paths[i]
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if use_transfer:
+        # 百万级顶点 transfer/export 会把 bpy 进程打崩（无 Python traceback）。
+        max_transfer_verts = 250_000
+        asset_verts = 0 if asset.vertices is None else int(asset.vertices.shape[0])
+        do_transfer = use_transfer
+        if do_transfer and asset_verts > max_transfer_verts:
+            print(
+                f"[TokenRig] skip transfer: asset has {asset_verts} verts "
+                f"(>{max_transfer_verts}); exporting predicted asset directly"
+            )
+            do_transfer = False
+
+        if do_transfer:
             transfer_target = asset.path
             if transfer_target_paths is not None and transfer_target_paths[i] is not None:
                 transfer_target = str(Path(transfer_target_paths[i]).resolve())

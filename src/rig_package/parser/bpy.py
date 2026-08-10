@@ -3,14 +3,20 @@ from numpy import ndarray
 from typing import Optional, Tuple
 
 import bpy # type: ignore
+import json
 import logging
 import numpy as np
 import os
+import struct
 import trimesh
 
 from .abstract import AbstractParser
 from ..info.asset import Asset
 from mathutils import Vector, Matrix # type: ignore
+
+# 超大网格走 bpy extract_mesh（逐 polygon 纯 Python）极易 OOM / 无 traceback 崩溃。
+_TRIMESH_SIZE_THRESHOLD_BYTES = 24 * 1024 * 1024
+
 
 def _is_ascii_fbx(filepath: str) -> bool:
     try:
@@ -19,6 +25,54 @@ def _is_ascii_fbx(filepath: str) -> bool:
     except OSError:
         return False
     return head.lstrip().startswith(b";") and b"FBX" in head
+
+
+def _read_gltf_json(filepath: str) -> Optional[dict]:
+    """读取 GLB/GLTF 的 JSON 块；失败返回 None。"""
+    lower = filepath.lower()
+    try:
+        if lower.endswith(".glb"):
+            with open(filepath, "rb") as f:
+                header = f.read(12)
+                if len(header) < 12 or header[:4] != b"glTF":
+                    return None
+                chunk_len = struct.unpack("<I", f.read(4))[0]
+                chunk_type = f.read(4)
+                if chunk_type != b"JSON":
+                    return None
+                return json.loads(f.read(chunk_len))
+        if lower.endswith(".gltf"):
+            with open(filepath, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except (OSError, ValueError, json.JSONDecodeError, struct.error):
+        return None
+    return None
+
+
+def _gltf_has_skins(filepath: str) -> Optional[bool]:
+    """None=无法判断；True/False=是否含 skins。"""
+    meta = _read_gltf_json(filepath)
+    if meta is None:
+        return None
+    skins = meta.get("skins") or []
+    return len(skins) > 0
+
+
+def _should_load_via_trimesh(filepath: str) -> bool:
+    """无蒙皮或体积过大的网格优先 trimesh，避开 bpy extract_mesh 崩溃。"""
+    lower = filepath.lower()
+    if not lower.endswith((".glb", ".gltf", ".obj", ".ply", ".stl")):
+        return False
+    if lower.endswith((".glb", ".gltf")):
+        has_skins = _gltf_has_skins(filepath)
+        if has_skins is False:
+            return True
+        if has_skins is True:
+            return False
+    try:
+        return os.path.getsize(filepath) >= _TRIMESH_SIZE_THRESHOLD_BYTES
+    except OSError:
+        return False
 
 
 def _load_asset_via_trimesh(filepath: str) -> Asset:
@@ -49,6 +103,21 @@ class BpyParser(AbstractParser):
     def load(cls, filepath: str, **kwargs) -> Asset:
         if filepath.lower().endswith(".fbx") and _is_ascii_fbx(filepath):
             print(f"[TokenRig] Loading ASCII FBX via trimesh (Blender cannot import it): {filepath}")
+            clean_bpy()
+            asset = _load_asset_via_trimesh(filepath)
+            asset.path = filepath
+            return asset
+        if _should_load_via_trimesh(filepath):
+            size_mb = 0.0
+            try:
+                size_mb = os.path.getsize(filepath) / (1024 * 1024)
+            except OSError:
+                pass
+            print(
+                f"[TokenRig] Loading via trimesh (mesh-only/large, {size_mb:.1f}MB): {filepath}"
+            )
+            # 清空场景，避免 transfer 误把上一份 bpy 网格当 use_origin 目标。
+            clean_bpy()
             asset = _load_asset_via_trimesh(filepath)
             asset.path = filepath
             return asset
@@ -852,19 +921,23 @@ def transfer_rigging(
     assert source_asset.parents is not None
     
     target_asset = BpyParser.load(filepath=target_path)
-    bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
-    # 目标若已绑骨（如重跑 SkinTokens），先卸掉旧 Armature 对象再删 data，
-    # 避免残留同名物体导致新建骨架变成 BagBuddy_Rig.001。
-    for obj in list(bpy.data.objects):
-        if obj.type == 'ARMATURE':
-            bpy.data.objects.remove(obj, do_unlink=True)
-    data_types = [
-        bpy.data.actions,
-        bpy.data.armatures,
-    ]
-    for data_collection in data_types:
-        for item in list(data_collection):
-            data_collection.remove(item)
+    # trimesh 快路径不会往场景塞网格；此时必须 use_origin=False 从 asset 重建。
+    scene_has_mesh = any(obj.type == "MESH" for obj in bpy.data.objects)
+    use_origin = scene_has_mesh
+    if scene_has_mesh:
+        bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+        # 目标若已绑骨（如重跑 SkinTokens），先卸掉旧 Armature 对象再删 data，
+        # 避免残留同名物体导致新建骨架变成 BagBuddy_Rig.001。
+        for obj in list(bpy.data.objects):
+            if obj.type == 'ARMATURE':
+                bpy.data.objects.remove(obj, do_unlink=True)
+        data_types = [
+            bpy.data.actions,
+            bpy.data.armatures,
+        ]
+        for data_collection in data_types:
+            for item in list(data_collection):
+                data_collection.remove(item)
     # 旧骨架已卸掉：勿再沿用目标文件里的 armature_name，否则 make_asset 会按
     # BagBuddy_Rig 查找已删除对象；交由新建路径使用默认名或显式重命名。
     target_asset.armature_name = None
@@ -901,5 +974,5 @@ def transfer_rigging(
         dists, idx = tree.query(target_vertices, k=1)
         target_asset.skin = source_skin[idx]
     
-    BpyParser.export(target_asset, export_path, use_origin=True, **kwargs)
+    BpyParser.export(target_asset, export_path, use_origin=use_origin, **kwargs)
     clean_bpy()
